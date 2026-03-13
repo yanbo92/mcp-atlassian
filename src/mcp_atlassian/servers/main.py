@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -16,6 +17,7 @@ from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
+from requests.exceptions import RequestException
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -23,6 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.env import is_env_truthy
@@ -60,6 +63,54 @@ DEFAULT_ALLOWED_REDIRECT_URIS = [
 ]
 DEFAULT_ALLOWED_GRANT_TYPES = ["authorization_code", "refresh_token"]
 OAUTH_PROXY_ENABLE_ENV = "ATLASSIAN_OAUTH_PROXY_ENABLE"
+
+
+def _start_confluence_session_keepalive(
+    config: ConfluenceConfig,
+) -> asyncio.Task[None] | None:
+    """Start a background keepalive task for Confluence session auth."""
+    if config.auth_type != "session":
+        return None
+
+    interval_seconds = config.session_keepalive_interval_seconds
+    if interval_seconds <= 0:
+        logger.info(
+            "Confluence session keepalive disabled because "
+            "CONFLUENCE_SESSION_KEEPALIVE_INTERVAL_SECONDS is %s.",
+            interval_seconds,
+        )
+        return None
+
+    async def _keepalive_loop() -> None:
+        fetcher = ConfluenceFetcher(config=config)
+        logger.info(
+            "Started Confluence session keepalive task with %s-second interval.",
+            interval_seconds,
+        )
+        try:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                try:
+                    await asyncio.to_thread(fetcher.keep_session_alive)
+                    logger.debug("Confluence session keepalive request succeeded.")
+                except (
+                    MCPAtlassianAuthenticationError,
+                    RequestException,
+                    RuntimeError,
+                    ValueError,
+                ) as e:
+                    logger.warning(
+                        "Confluence session keepalive request failed: %s",
+                        e,
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            logger.debug("Confluence session keepalive task cancelled.")
+            raise
+        finally:
+            fetcher.close()
+
+    return asyncio.create_task(_keepalive_loop())
 
 
 def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
@@ -128,6 +179,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
 
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
+    confluence_session_keepalive_task: asyncio.Task[None] | None = None
 
     if services.get("jira"):
         try:
@@ -166,6 +218,12 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
     )
+
+    if loaded_confluence_config:
+        confluence_session_keepalive_task = _start_confluence_session_keepalive(
+            loaded_confluence_config
+        )
+
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
     logger.info(f"Enabled toolsets filter: {sorted(enabled_toolsets)}")
@@ -184,6 +242,14 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.debug("Cleaning up Jira resources...")
             if loaded_confluence_config:
                 logger.debug("Cleaning up Confluence resources...")
+            if confluence_session_keepalive_task:
+                confluence_session_keepalive_task.cancel()
+                try:
+                    await confluence_session_keepalive_task
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Confluence session keepalive task stopped successfully."
+                    )
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")

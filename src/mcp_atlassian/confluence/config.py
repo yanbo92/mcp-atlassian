@@ -28,7 +28,8 @@ class ConfluenceConfig:
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
-    session_cookie: str | None = None  # Raw Cookie header value for browser session auth
+    session_cookie: str | None = None  # Raw Cookie header value for session auth
+    session_keepalive_interval_seconds: int = 540  # Keepalive interval for session auth
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
@@ -195,6 +196,21 @@ class ConfluenceConfig:
         ):
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
 
+        session_keepalive_interval_seconds = 540
+        keepalive_interval = os.getenv(
+            "CONFLUENCE_SESSION_KEEPALIVE_INTERVAL_SECONDS"
+        )
+        if keepalive_interval:
+            if keepalive_interval.isdigit():
+                session_keepalive_interval_seconds = int(keepalive_interval)
+            else:
+                logger = logging.getLogger("mcp-atlassian.confluence.config")
+                logger.warning(
+                    "Invalid CONFLUENCE_SESSION_KEEPALIVE_INTERVAL_SECONDS value %r. "
+                    "Using default of 540 seconds.",
+                    keepalive_interval,
+                )
+
         return cls(
             url=url or "",
             auth_type=auth_type,
@@ -202,6 +218,7 @@ class ConfluenceConfig:
             api_token=api_token,
             personal_token=personal_token,
             session_cookie=session_cookie,
+            session_keepalive_interval_seconds=session_keepalive_interval_seconds,
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
             spaces_filter=spaces_filter,

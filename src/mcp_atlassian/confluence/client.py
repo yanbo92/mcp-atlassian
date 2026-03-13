@@ -210,13 +210,28 @@ class ConfluenceClient:
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
 
+    def keep_session_alive(self) -> None:
+        """Refresh a Confluence Server/DC session before it expires."""
+        if self.config.auth_type != "session":
+            return
+
+        logger.debug("Sending Confluence session keepalive request")
+        self.confluence.get_all_spaces(start=0, limit=1)
+
+    def close(self) -> None:
+        """Close the underlying HTTP session if one is open."""
+        session = getattr(self.confluence, "_session", None)
+        if session is not None:
+            session.close()
+
     def _apply_custom_headers(self) -> None:
         """Apply custom headers to the Confluence session."""
         if not self.config.custom_headers:
             return
 
         logger.debug(
-            f"Applying {len(self.config.custom_headers)} custom headers to Confluence session"
+            "Applying %s custom headers to Confluence session",
+            len(self.config.custom_headers),
         )
         for header_name, header_value in self.config.custom_headers.items():
             self.confluence._session.headers[header_name] = header_value
