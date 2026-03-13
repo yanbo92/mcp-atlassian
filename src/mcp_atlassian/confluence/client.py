@@ -86,6 +86,22 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "session":
+            logger.debug(
+                f"Initializing Confluence client with session cookie auth. "
+                f"URL: {self.config.url}, "
+                f"Cookie present: {bool(self.config.session_cookie)}"
+            )
+            session = Session()
+            if self.config.session_cookie:
+                session.headers["Cookie"] = self.config.session_cookie
+            self.confluence = Confluence(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
@@ -109,7 +125,7 @@ class ConfluenceClient:
 
         # Disable trust_env for PAT and OAuth to prevent .netrc from overriding
         # explicit credentials (#860). Basic auth can safely use .netrc.
-        if self.config.auth_type in ("pat", "oauth"):
+        if self.config.auth_type in ("pat", "oauth", "session"):
             self.confluence._session.trust_env = False
 
         # Configure SSL verification using the shared utility

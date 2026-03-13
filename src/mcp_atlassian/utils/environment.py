@@ -17,6 +17,8 @@ def _check_service_auth(
     username_env: str,
     api_env: str,
     pat_env: str,
+    session_cookie_env: str | None = None,
+    jsessionid_env: str | None = None,
 ) -> bool:
     """Detect whether a single Atlassian service is authenticated.
 
@@ -29,6 +31,8 @@ def _check_service_auth(
         username_env: Env var name for the Basic Auth username.
         api_env: Env var name for the Basic Auth API token / password.
         pat_env: Env var name for the Personal Access Token (Server/DC only).
+        session_cookie_env: Env var name for raw session cookie auth.
+        jsessionid_env: Env var name for JSESSIONID shortcut auth.
 
     Returns:
         ``True`` when a valid auth configuration is detected, ``False`` otherwise.
@@ -73,9 +77,15 @@ def _check_service_auth(
             logger.info("Using %s Cloud Basic Authentication (API Token)", service_name)
             return True
     else:  # Server/Data Center non-OAuth
-        if os.getenv(pat_env) or (os.getenv(username_env) and os.getenv(api_env)):
+        if (
+            os.getenv(pat_env)
+            or os.getenv(session_cookie_env or "")
+            or os.getenv(jsessionid_env or "")
+            or (os.getenv(username_env) and os.getenv(api_env))
+        ):
             logger.info(
-                "Using %s Server/Data Center authentication (PAT or Basic Auth)",
+                "Using %s Server/Data Center authentication "
+                "(PAT, session cookie, or Basic Auth)",
                 service_name,
             )
             return True
@@ -107,6 +117,8 @@ def get_available_services(
             username_env="CONFLUENCE_USERNAME",
             api_env="CONFLUENCE_API_TOKEN",
             pat_env="CONFLUENCE_PERSONAL_TOKEN",
+            session_cookie_env="CONFLUENCE_SESSION_COOKIE",
+            jsessionid_env="CONFLUENCE_JSESSIONID",
         )
 
     if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (

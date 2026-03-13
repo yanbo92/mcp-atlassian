@@ -24,10 +24,11 @@ class ConfluenceConfig:
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth", "session"]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
+    session_cookie: str | None = None  # Raw Cookie header value for browser session auth
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
@@ -102,6 +103,9 @@ class ConfluenceConfig:
         username = os.getenv("CONFLUENCE_USERNAME")
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
+        session_cookie = os.getenv("CONFLUENCE_SESSION_COOKIE")
+        if not session_cookie and os.getenv("CONFLUENCE_JSESSIONID"):
+            session_cookie = f"JSESSIONID={os.getenv('CONFLUENCE_JSESSIONID')}"
 
         # Check for OAuth configuration (pass service info for DC detection)
         oauth_config = get_oauth_config_from_env(
@@ -144,6 +148,8 @@ class ConfluenceConfig:
                         "Both PAT and OAuth configured for Server/DC. Using PAT."
                     )
                 auth_type = "pat"
+            elif session_cookie:
+                auth_type = "session"
             elif oauth_config:
                 auth_type = "oauth"
             elif username and api_token:
@@ -151,11 +157,13 @@ class ConfluenceConfig:
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
-                    "CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and "
+                    "CONFLUENCE_PERSONAL_TOKEN, CONFLUENCE_SESSION_COOKIE, "
+                    "CONFLUENCE_JSESSIONID, or CONFLUENCE_USERNAME and "
                     "CONFLUENCE_API_TOKEN. "
                     "Confluence Server/Data Center authentication is incomplete. "
-                    "Set CONFLUENCE_PERSONAL_TOKEN, or set both "
-                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN."
+                    "Set CONFLUENCE_PERSONAL_TOKEN, CONFLUENCE_SESSION_COOKIE, "
+                    "CONFLUENCE_JSESSIONID, or set both CONFLUENCE_USERNAME and "
+                    "CONFLUENCE_API_TOKEN."
                 )
                 raise ValueError(error_msg)
 
@@ -193,6 +201,7 @@ class ConfluenceConfig:
             username=username,
             api_token=api_token,
             personal_token=personal_token,
+            session_cookie=session_cookie,
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
             spaces_filter=spaces_filter,
@@ -258,6 +267,8 @@ class ConfluenceConfig:
             return False
         elif self.auth_type == "pat":
             return bool(self.personal_token)
+        elif self.auth_type == "session":
+            return bool(self.session_cookie)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
         logger.warning(
