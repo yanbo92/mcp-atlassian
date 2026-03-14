@@ -22,6 +22,11 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
+    @staticmethod
+    def _strip_excerpt_highlight_markers(excerpt: str) -> str:
+        """Remove Confluence search highlight markers from excerpt text."""
+        return excerpt.replace("@@@hl@@@", "").replace("@@@endhl@@@", "")
+
     @handle_atlassian_api_errors("Confluence API")
     def search(
         self, cql: str, limit: int = 10, spaces_filter: str | None = None
@@ -83,10 +88,11 @@ class SearchMixin(ConfluenceClient):
                 if result_item.get("content", {}).get("id") == page.id:
                     excerpt = result_item.get("excerpt", "")
                     if excerpt:
+                        cleaned_excerpt = self._strip_excerpt_highlight_markers(excerpt)
                         # Process the excerpt as HTML content
                         space_key = page.space.key if page.space else ""
                         _, processed_markdown = self.preprocessor.process_html_content(
-                            excerpt,
+                            cleaned_excerpt,
                             space_key=space_key,
                             confluence_client=self.confluence,
                         )
